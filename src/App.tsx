@@ -1,13 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { Navbar } from './components/Navbar';
 import { Dashboard } from './components/Dashboard';
 import { TripAnalysisTemplate } from './components/TripAnalysisTemplate';
-import { RouteMapViewer } from './components/RouteMapViewer';
-import { Settings } from './components/Settings';
-import { AdminLockModal } from './components/AdminLockModal';
-import { UserManualModal } from './components/UserManualModal';
-import { DuplicateRecordWarningModal } from './components/DuplicateRecordWarningModal';
-import { MultipleProjectEquipmentModal } from './components/MultipleProjectEquipmentModal';
 import { AuthLanding } from './components/AuthLanding';
 import { 
   auth, 
@@ -19,10 +13,10 @@ import {
   fetchUserReportsFromFirestore,
   saveUserReportToFirestore,
   deleteUserReportFromFirestore,
-  clearUserReportsFromFirestore
+  clearUserReportsFromFirestore,
+  subscribeToUserReports
 } from './lib/firebase';
 import { onAuthStateChanged } from 'firebase/auth';
-import { UserProfileView } from './components/UserProfileView';
 import { TripReportData, SettingsConfig } from './types';
 import { getStoredSettings } from './utils/defaultSettings';
 import { createSampleTripReport, computePredictedDailyWorkingHours } from './utils/kmlParser';
@@ -36,6 +30,15 @@ import {
   findExistingReportByTechAndDate,
   isSameTechnicianAndScheduleDate
 } from './utils/historyStorage';
+
+// Lazy-loaded components for optimal bundle splitting and performance
+const RouteMapViewer = lazy(() => import('./components/RouteMapViewer').then(m => ({ default: m.RouteMapViewer })));
+const Settings = lazy(() => import('./components/Settings').then(m => ({ default: m.Settings })));
+const UserProfileView = lazy(() => import('./components/UserProfileView').then(m => ({ default: m.UserProfileView })));
+const AdminLockModal = lazy(() => import('./components/AdminLockModal').then(m => ({ default: m.AdminLockModal })));
+const UserManualModal = lazy(() => import('./components/UserManualModal').then(m => ({ default: m.UserManualModal })));
+const DuplicateRecordWarningModal = lazy(() => import('./components/DuplicateRecordWarningModal').then(m => ({ default: m.DuplicateRecordWarningModal })));
+const MultipleProjectEquipmentModal = lazy(() => import('./components/MultipleProjectEquipmentModal').then(m => ({ default: m.MultipleProjectEquipmentModal })));
 
 export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'sheet' | 'map' | 'profile' | 'settings'>('dashboard');
@@ -129,7 +132,7 @@ export default function App() {
   const [reportsList, setReportsList] = useState<TripReportData[]>([]);
   const [historyReports, setHistoryReports] = useState<TripReportData[]>([]);
 
-  // Automatically fetch & sync user-specific history records from Firestore database
+  // Automatically fetch & sync user-specific history records with short-lived real-time listener
   useEffect(() => {
     if (!currentUserProfile) {
       setHistoryReports([]);
@@ -142,13 +145,21 @@ export default function App() {
     const localReports = getStoredHistoryReports(userId);
     setHistoryReports(localReports);
 
-    // Sync from Firestore database (authoritative database source)
-    fetchUserReportsFromFirestore(userId).then((fsReports) => {
-      replaceLocalHistoryCache(fsReports, userId);
-      setHistoryReports(fsReports);
-    }).catch(err => {
-      console.error('Failed to sync user reports from Firestore database:', err);
-    });
+    // Short-lived realtime listener subscription (automatically unsubscribes on unmount or user change)
+    const unsubscribe = subscribeToUserReports(
+      userId,
+      (fsReports) => {
+        replaceLocalHistoryCache(fsReports, userId);
+        setHistoryReports(fsReports);
+      },
+      (err) => {
+        console.error('Failed to sync user reports from Firestore database:', err);
+      }
+    );
+
+    return () => {
+      unsubscribe();
+    };
   }, [currentUserProfile]);
 
   const handleRefreshHistory = () => {
@@ -500,67 +511,74 @@ export default function App() {
           />
         )}
 
-        {activeTab === 'map' && (
-          <RouteMapViewer
-            report={activeReport}
-            onBackToDashboard={() => setActiveTab('dashboard')}
-          />
-        )}
+        <Suspense fallback={
+          <div className="flex items-center justify-center p-12 space-x-3 text-amber-600">
+            <div className="w-5 h-5 border-2 border-amber-500 border-t-transparent rounded-full animate-spin" />
+            <span className="text-sm font-semibold text-slate-600">Loading module...</span>
+          </div>
+        }>
+          {activeTab === 'map' && (
+            <RouteMapViewer
+              report={activeReport}
+              onBackToDashboard={() => setActiveTab('dashboard')}
+            />
+          )}
 
-        {activeTab === 'profile' && currentUserProfile && (
-          <UserProfileView
-            currentUserProfile={currentUserProfile}
-            onProfileUpdated={(updated) => setCurrentUserProfile(updated)}
-            settings={settings}
-          />
-        )}
+          {activeTab === 'profile' && currentUserProfile && (
+            <UserProfileView
+              currentUserProfile={currentUserProfile}
+              onProfileUpdated={(updated) => setCurrentUserProfile(updated)}
+              settings={settings}
+            />
+          )}
 
-        {activeTab === 'settings' && currentUserProfile?.role === 'admin' && (
-          <Settings
-            settings={settings}
-            onUpdateSettings={(newSettings) => setSettings(newSettings)}
-            onLockAdminSession={handleLockAdminSession}
-            currentUserProfile={currentUserProfile}
+          {activeTab === 'settings' && currentUserProfile?.role === 'admin' && (
+            <Settings
+              settings={settings}
+              onUpdateSettings={(newSettings) => setSettings(newSettings)}
+              onLockAdminSession={handleLockAdminSession}
+              currentUserProfile={currentUserProfile}
+            />
+          )}
+
+          {/* Duplicate Record Warning Modal */}
+          <DuplicateRecordWarningModal
+            isOpen={!!pendingDuplicate}
+            existingRecord={pendingDuplicate?.existingReport || null}
+            newRecord={pendingDuplicate?.newReport || null}
+            onConfirmRewrite={handleConfirmRewrite}
+            onCancel={handleCancelRewrite}
           />
-        )}
+
+          {/* Multiple Projects Equipment Prompt Modal */}
+          <MultipleProjectEquipmentModal
+            isOpen={!!pendingMultipleProject}
+            report={pendingMultipleProject?.newReport || null}
+            mode={pendingMultipleProject?.mode || 'replace'}
+            onConfirm={handleConfirmMultipleProjectEquipment}
+            onCancel={handleCancelMultipleProjectEquipment}
+          />
+
+          {/* Admin Lock Modal */}
+          <AdminLockModal
+            isOpen={showAdminModal}
+            onClose={() => setShowAdminModal(false)}
+            onUnlockSuccess={() => {
+              setIsAdminAuthenticated(true);
+              setShowAdminModal(false);
+              setActiveTab('settings');
+            }}
+            currentPasscode={settings.adminPasscode || 'admin123'}
+          />
+
+          {/* User Manual Modal */}
+          <UserManualModal
+            isOpen={showUserManualModal}
+            onClose={() => setShowUserManualModal(false)}
+            onLoadSample={handleLoadSample}
+          />
+        </Suspense>
       </main>
-
-      {/* Duplicate Record Warning Modal */}
-      <DuplicateRecordWarningModal
-        isOpen={!!pendingDuplicate}
-        existingRecord={pendingDuplicate?.existingReport || null}
-        newRecord={pendingDuplicate?.newReport || null}
-        onConfirmRewrite={handleConfirmRewrite}
-        onCancel={handleCancelRewrite}
-      />
-
-      {/* Multiple Projects Equipment Prompt Modal */}
-      <MultipleProjectEquipmentModal
-        isOpen={!!pendingMultipleProject}
-        report={pendingMultipleProject?.newReport || null}
-        mode={pendingMultipleProject?.mode || 'replace'}
-        onConfirm={handleConfirmMultipleProjectEquipment}
-        onCancel={handleCancelMultipleProjectEquipment}
-      />
-
-      {/* Admin Lock Modal */}
-      <AdminLockModal
-        isOpen={showAdminModal}
-        onClose={() => setShowAdminModal(false)}
-        onUnlockSuccess={() => {
-          setIsAdminAuthenticated(true);
-          setShowAdminModal(false);
-          setActiveTab('settings');
-        }}
-        currentPasscode={settings.adminPasscode || 'admin123'}
-      />
-
-      {/* User Manual Modal */}
-      <UserManualModal
-        isOpen={showUserManualModal}
-        onClose={() => setShowUserManualModal(false)}
-        onLoadSample={handleLoadSample}
-      />
 
       {/* Footer */}
       <footer className="print:hidden border-t border-slate-800/80 bg-slate-900 py-6 text-slate-400 text-xs transition-colors">
