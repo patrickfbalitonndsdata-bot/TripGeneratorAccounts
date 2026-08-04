@@ -97,13 +97,13 @@ export const HistoryRecordsViewer: React.FC<HistoryRecordsViewerProps> = ({
         <div>
           <div className="flex items-center space-x-2">
             <Clock className="w-5 h-5 text-amber-600" />
-            <h2 className="text-lg font-bold text-slate-900">Stored Reports (2-Week Retention Records)</h2>
+            <h2 className="text-lg font-bold text-slate-900">Stored Reports (10-Day Retention Records)</h2>
             <span className="px-2.5 py-0.5 text-xs font-bold bg-amber-100 text-amber-800 rounded-full">
               {historyReports.length} {historyReports.length === 1 ? 'Report' : 'Reports'}
             </span>
           </div>
           <p className="text-xs text-slate-500 mt-1">
-            Reports are automatically retained for up to 14 days (2 weeks max) to calculate weekly <strong className="text-slate-700">Running Total - Field Time Cal</strong> by adding Predicted Daily Working Hours.
+            Reports are automatically retained for up to 10 days to calculate weekly <strong className="text-slate-700">Running Total - Field Time Cal</strong> by adding Predicted Daily Working Hours.
           </p>
         </div>
 
@@ -121,7 +121,7 @@ export const HistoryRecordsViewer: React.FC<HistoryRecordsViewerProps> = ({
             <div className="flex items-center space-x-2 bg-red-50 p-2 border border-red-300 rounded-xl">
               <span className="text-xs text-red-900 font-semibold flex items-center gap-1">
                 <ShieldAlert className="w-4 h-4 text-red-600" />
-                Clear 2-week history?
+                Clear 10-day history?
               </span>
               <button
                 onClick={handleClearRecords}
