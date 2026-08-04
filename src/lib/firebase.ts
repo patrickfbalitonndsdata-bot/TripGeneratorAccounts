@@ -326,6 +326,43 @@ export interface EmailVerificationRecord {
   expiresAt: number;
 }
 
+// Request Email Verification Code for Profile Email Update
+export async function requestEmailUpdateVerificationCode(
+  newEmail: string,
+  currentUid: string
+): Promise<{ code: string; expiresAt: number; email: string }> {
+  const cleanEmail = newEmail.trim().toLowerCase();
+
+  if (!cleanEmail || !cleanEmail.includes('@') || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    throw new Error('Please enter a valid email address.');
+  }
+
+  const usersCol = collection(db, 'users');
+
+  // Check if email already registered by another user in Firestore
+  const snapEmail = await getDocs(query(usersCol, where('email', '==', cleanEmail)));
+  if (!snapEmail.empty) {
+    const existingUser = snapEmail.docs[0];
+    if (existingUser.id !== currentUid) {
+      throw new Error('An account with this email address is already registered to another user.');
+    }
+  }
+
+  // Generate 6-digit numeric authentication code
+  const code = Math.floor(100000 + Math.floor(Math.random() * 900000)).toString();
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
+
+  const verificationRef = doc(db, 'emailVerifications', cleanEmail);
+  await setDoc(verificationRef, {
+    email: cleanEmail,
+    code,
+    createdAt: new Date().toISOString(),
+    expiresAt
+  });
+
+  return { code, expiresAt, email: cleanEmail };
+}
+
 // Request Email Verification Code for Registration
 export async function requestRegistrationVerificationCode(
   email: string,
