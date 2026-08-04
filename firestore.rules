@@ -3,7 +3,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // User accounts collection - allow read/write for user registration and admin status updates
-    match /users/{userId} {
+    match /users/{document=**} {
       allow read, write: if true;
     }
 
@@ -13,12 +13,12 @@ service cloud.firestore {
     }
 
     // Email verification codes collection
-    match /emailVerifications/{verificationId} {
+    match /emailVerifications/{document=**} {
       allow read, write: if true;
     }
 
     // Trip reports collection
-    match /trip_reports/{reportId} {
+    match /trip_reports/{document=**} {
       allow read, write, delete: if true;
     }
   }
