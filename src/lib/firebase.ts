@@ -340,12 +340,19 @@ export async function requestEmailUpdateVerificationCode(
   const usersCol = collection(db, 'users');
 
   // Check if email already registered by another user in Firestore
-  const snapEmail = await getDocs(query(usersCol, where('email', '==', cleanEmail)));
-  if (!snapEmail.empty) {
-    const existingUser = snapEmail.docs[0];
-    if (existingUser.id !== currentUid) {
-      throw new Error('An account with this email address is already registered to another user.');
+  try {
+    const snapEmail = await getDocs(query(usersCol, where('email', '==', cleanEmail)));
+    if (!snapEmail.empty) {
+      const existingUser = snapEmail.docs[0];
+      if (existingUser.id !== currentUid) {
+        throw new Error('An account with this email address is already registered to another user.');
+      }
     }
+  } catch (err: any) {
+    if (err.message && err.message.includes('already registered')) {
+      throw err;
+    }
+    console.warn('Note: Email uniqueness check notice:', err);
   }
 
   // Generate 6-digit numeric authentication code
@@ -353,12 +360,17 @@ export async function requestEmailUpdateVerificationCode(
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
 
   const verificationRef = doc(db, 'emailVerifications', cleanEmail);
-  await setDoc(verificationRef, {
-    email: cleanEmail,
-    code,
-    createdAt: new Date().toISOString(),
-    expiresAt
-  });
+  try {
+    await setDoc(verificationRef, {
+      email: cleanEmail,
+      code,
+      createdAt: new Date().toISOString(),
+      expiresAt
+    });
+  } catch (err: any) {
+    console.error('Error writing email verification code:', err);
+    throw new Error('Database permission error writing verification code. Please try again.');
+  }
 
   return { code, expiresAt, email: cleanEmail };
 }
@@ -378,16 +390,30 @@ export async function requestRegistrationVerificationCode(
   const usersCol = collection(db, 'users');
 
   // Check if email already registered in Firestore users
-  const snapEmail = await getDocs(query(usersCol, where('email', '==', cleanEmail)));
-  if (!snapEmail.empty) {
-    throw new Error('An account with this email address is already registered. Please log in instead.');
+  try {
+    const snapEmail = await getDocs(query(usersCol, where('email', '==', cleanEmail)));
+    if (!snapEmail.empty) {
+      throw new Error('An account with this email address is already registered. Please log in instead.');
+    }
+  } catch (err: any) {
+    if (err.message && err.message.includes('already registered')) {
+      throw err;
+    }
+    console.warn('Note: Email uniqueness query notice:', err);
   }
 
   // Check if username already taken in Firestore users
   if (cleanUsername) {
-    const snapUsername = await getDocs(query(usersCol, where('usernameLower', '==', cleanUsername)));
-    if (!snapUsername.empty) {
-      throw new Error('This username is already taken. Please choose a different username.');
+    try {
+      const snapUsername = await getDocs(query(usersCol, where('usernameLower', '==', cleanUsername)));
+      if (!snapUsername.empty) {
+        throw new Error('This username is already taken. Please choose a different username.');
+      }
+    } catch (err: any) {
+      if (err.message && err.message.includes('already taken')) {
+        throw err;
+      }
+      console.warn('Note: Username uniqueness query notice:', err);
     }
   }
 
@@ -396,12 +422,17 @@ export async function requestRegistrationVerificationCode(
   const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
 
   const verificationRef = doc(db, 'emailVerifications', cleanEmail);
-  await setDoc(verificationRef, {
-    email: cleanEmail,
-    code,
-    createdAt: new Date().toISOString(),
-    expiresAt
-  });
+  try {
+    await setDoc(verificationRef, {
+      email: cleanEmail,
+      code,
+      createdAt: new Date().toISOString(),
+      expiresAt
+    });
+  } catch (err: any) {
+    console.error('Error writing email verification code:', err);
+    throw new Error('Database permission error generating verification code. Please try again.');
+  }
 
   return { code, expiresAt, email: cleanEmail };
 }
