@@ -6,7 +6,9 @@ import {
   firebaseSignOut, 
   UserProfile,
   registerUserAccount,
-  loginUserAccount
+  loginUserAccount,
+  requestRegistrationVerificationCode,
+  verifyEmailCode
 } from '../lib/firebase';
 import { 
   Lock, 
@@ -23,7 +25,13 @@ import {
   ShieldAlert,
   Crown,
   User,
-  Sparkles
+  Sparkles,
+  Mail,
+  Send,
+  Copy,
+  Check,
+  RotateCcw,
+  ArrowLeft
 } from 'lucide-react';
 
 interface AuthLandingProps {
@@ -56,6 +64,22 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
   const [regError, setRegError] = useState<string | null>(null);
   const [regSuccessMessage, setRegSuccessMessage] = useState<string | null>(null);
 
+  // Email Verification State
+  const [verificationStep, setVerificationStep] = useState<'form' | 'code'>('form');
+  const [enteredCode, setEnteredCode] = useState('');
+  const [sentCode, setSentCode] = useState<string | null>(null);
+  const [codeCopied, setCodeCopied] = useState(false);
+  const [resendCooldown, setResendCooldown] = useState(0);
+
+  // Resend cooldown timer effect
+  useEffect(() => {
+    if (resendCooldown <= 0) return;
+    const timer = setInterval(() => {
+      setResendCooldown((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [resendCooldown]);
+
   // Clear forms on mount and when switching tabs to prevent unwanted browser pre-fills
   useEffect(() => {
     setLoginEmail('');
@@ -65,7 +89,11 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
     setRegEmail('');
     setRegPassword('');
     setAdminKey('');
+    setVerificationStep('form');
+    setEnteredCode('');
+    setSentCode(null);
   }, [activeTab]);
+
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
@@ -92,8 +120,8 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
     }
   };
 
-  // Handle Registration
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
+  // Step 1: Validate Registration Details & Request Email Authentication Code
+  const handleInitiateVerification = async (e: React.FormEvent) => {
     e.preventDefault();
     setRegError(null);
     setRegSuccessMessage(null);
@@ -118,7 +146,6 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
       return;
     }
 
-    // Verify Admin key if Admin role selected
     const cleanRegEmail = regEmail.trim().toLowerCase();
     const isSuperAdminRegister = cleanRegEmail === 'patrickf.baliton.ndsdata@gmail.com';
     const effectiveRole = isSuperAdminRegister ? 'admin' : selectedRole;
@@ -133,6 +160,58 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
     setRegLoading(true);
 
     try {
+      const { code } = await requestRegistrationVerificationCode(cleanRegEmail, regUsername.trim());
+      setSentCode(code);
+      setVerificationStep('code');
+      setResendCooldown(30);
+      setEnteredCode('');
+    } catch (err: any) {
+      console.error('Email code request error:', err);
+      setRegError(err.message || 'Failed to generate email authentication code.');
+    } finally {
+      setRegLoading(false);
+    }
+  };
+
+  // Resend Code Handler
+  const handleResendCode = async () => {
+    if (resendCooldown > 0) return;
+    setRegError(null);
+    setRegLoading(true);
+    try {
+      const { code } = await requestRegistrationVerificationCode(regEmail.trim().toLowerCase(), regUsername.trim());
+      setSentCode(code);
+      setResendCooldown(30);
+      setCodeCopied(false);
+    } catch (err: any) {
+      setRegError(err.message || 'Failed to resend verification code.');
+    } finally {
+      setRegLoading(false);
+    }
+  };
+
+  // Step 2: Verify Code and Create Account
+  const handleVerifyAndRegister = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setRegError(null);
+    setRegSuccessMessage(null);
+
+    if (!enteredCode.trim() || enteredCode.trim().length !== 6) {
+      setRegError('Please enter the 6-digit verification code.');
+      return;
+    }
+
+    setRegLoading(true);
+
+    try {
+      // 1. Verify code matches
+      await verifyEmailCode(regEmail.trim().toLowerCase(), enteredCode.trim());
+
+      // 2. Complete registration
+      const cleanRegEmail = regEmail.trim().toLowerCase();
+      const isSuperAdminRegister = cleanRegEmail === 'patrickf.baliton.ndsdata@gmail.com';
+      const effectiveRole = isSuperAdminRegister ? 'admin' : selectedRole;
+
       const { profile, requiresApproval } = await registerUserAccount(
         regEmail,
         regPassword,
@@ -143,24 +222,23 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
 
       if (requiresApproval) {
         setRegSuccessMessage(
-          'Registration Successful! Your account has been registered with INACTIVE status. An Administrator must activate your account before you can log in.'
+          'Email Verified & Registration Successful! Your account has been registered with INACTIVE status. An Administrator must activate your account before you can log in.'
         );
+        setVerificationStep('form');
         setRegName('');
         setRegUsername('');
         setRegEmail('');
         setRegPassword('');
         setAdminKey('');
+        setEnteredCode('');
+        setSentCode(null);
       } else {
-        setRegSuccessMessage('Administrator Account Created and Activated! You are now logged in.');
+        setRegSuccessMessage('Email Verified & Administrator Account Created! You are now logged in.');
         onAuthSuccess(profile);
       }
     } catch (err: any) {
-      console.error('Registration error:', err);
-      if (err.message) {
-        setRegError(err.message);
-      } else {
-        setRegError('Failed to register account.');
-      }
+      console.error('Registration verification error:', err);
+      setRegError(err.message || 'Failed to verify email code or register account.');
     } finally {
       setRegLoading(false);
     }
@@ -286,7 +364,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
 
           {/* REGISTER FORM */}
           {activeTab === 'register' && (
-            <form onSubmit={handleRegisterSubmit} autoComplete="off" className="space-y-4">
+            <div className="space-y-4">
               {regError && (
                 <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs font-semibold flex items-start space-x-2.5">
                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -301,140 +379,260 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
                 </div>
               )}
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-300 block">Full Name</label>
-                <input
-                  type="text"
-                  required
-                  autoComplete="name"
-                  placeholder="e.g. John Doe"
-                  value={regName}
-                  onChange={(e) => setRegName(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all"
-                />
-              </div>
+              {/* STEP 1: Registration Input Details Form */}
+              {verificationStep === 'form' ? (
+                <form onSubmit={handleInitiateVerification} autoComplete="off" className="space-y-4">
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300 block">Full Name</label>
+                    <input
+                      type="text"
+                      required
+                      autoComplete="name"
+                      placeholder="e.g. John Doe"
+                      value={regName}
+                      onChange={(e) => setRegName(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all"
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-300 block">Username</label>
-                <input
-                  type="text"
-                  required
-                  autoComplete="username"
-                  placeholder="e.g. john_doe or tech_user"
-                  value={regUsername}
-                  onChange={(e) => setRegUsername(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all font-mono"
-                />
-              </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300 block">Username</label>
+                    <input
+                      type="text"
+                      required
+                      autoComplete="username"
+                      placeholder="e.g. john_doe or tech_user"
+                      value={regUsername}
+                      onChange={(e) => setRegUsername(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all font-mono"
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-300 block">Email Address</label>
-                <input
-                  type="email"
-                  required
-                  autoComplete="email"
-                  placeholder="name@company.com"
-                  value={regEmail}
-                  onChange={(e) => setRegEmail(e.target.value)}
-                  className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all"
-                />
-              </div>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300 block">Email Address</label>
+                    <input
+                      type="email"
+                      required
+                      autoComplete="email"
+                      placeholder="name@company.com"
+                      value={regEmail}
+                      onChange={(e) => setRegEmail(e.target.value)}
+                      className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all"
+                    />
+                  </div>
 
-              <div className="space-y-1">
-                <label className="text-xs font-bold text-slate-300 block">Password (6+ chars)</label>
-                <div className="relative">
-                  <input
-                    type={showRegPassword ? 'text' : 'password'}
-                    required
-                    autoComplete="new-password"
-                    placeholder="••••••••"
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    className="w-full pl-4 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowRegPassword(!showRegPassword)}
-                    className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300"
-                  >
-                    {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-
-              {/* Account Type / Role Selection */}
-              <div className="space-y-2 pt-1">
-                <label className="text-xs font-bold text-slate-300 block">Requested Account Role</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setSelectedRole('user')}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center space-x-2 ${
-                      selectedRole === 'user'
-                        ? 'bg-amber-500/10 border-amber-500 text-amber-300 font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                    }`}
-                  >
-                    <User className="w-4 h-4 shrink-0 text-amber-400" />
-                    <div>
-                      <span className="text-xs block font-bold">Technician / Staff</span>
-                      <span className="text-[10px] text-slate-400 block font-normal">Pending Admin Approval</span>
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300 block">Password (6+ chars)</label>
+                    <div className="relative">
+                      <input
+                        type={showRegPassword ? 'text' : 'password'}
+                        required
+                        autoComplete="new-password"
+                        placeholder="••••••••"
+                        value={regPassword}
+                        onChange={(e) => setRegPassword(e.target.value)}
+                        className="w-full pl-4 pr-10 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowRegPassword(!showRegPassword)}
+                        className="absolute right-3 top-2.5 text-slate-500 hover:text-slate-300"
+                      >
+                        {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
                     </div>
-                  </button>
+                  </div>
+
+                  {/* Account Type / Role Selection */}
+                  <div className="space-y-2 pt-1">
+                    <label className="text-xs font-bold text-slate-300 block">Requested Account Role</label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRole('user')}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center space-x-2 ${
+                          selectedRole === 'user'
+                            ? 'bg-amber-500/10 border-amber-500 text-amber-300 font-bold'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                        }`}
+                      >
+                        <User className="w-4 h-4 shrink-0 text-amber-400" />
+                        <div>
+                          <span className="text-xs block font-bold">Technician / Staff</span>
+                          <span className="text-[10px] text-slate-400 block font-normal">Pending Admin Approval</span>
+                        </div>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedRole('admin')}
+                        className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center space-x-2 ${
+                          selectedRole === 'admin'
+                            ? 'bg-amber-500/10 border-amber-500 text-amber-300 font-bold'
+                            : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
+                        }`}
+                      >
+                        <Crown className="w-4 h-4 shrink-0 text-amber-400" />
+                        <div>
+                          <span className="text-xs block font-bold">Administrator</span>
+                          <span className="text-[10px] text-slate-400 block font-normal">Requires Admin Key</span>
+                        </div>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Admin Passcode input if Admin role requested */}
+                  {selectedRole === 'admin' && (
+                    <div className="space-y-1 p-3 bg-slate-950 rounded-xl border border-amber-500/30">
+                      <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Administrator Security Passcode</span>
+                      </label>
+                      <input
+                        type="password"
+                        placeholder="Enter security passcode"
+                        value={adminKey}
+                        onChange={(e) => setAdminKey(e.target.value)}
+                        className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono text-amber-300 focus:border-amber-500 focus:outline-none"
+                      />
+                      <p className="text-[10px] text-slate-400">
+                        Entering a valid Admin Security Key creates an instantly active Administrator account.
+                      </p>
+                    </div>
+                  )}
 
                   <button
-                    type="button"
-                    onClick={() => setSelectedRole('admin')}
-                    className={`p-3 rounded-xl border text-left transition-all cursor-pointer flex items-center space-x-2 ${
-                      selectedRole === 'admin'
-                        ? 'bg-amber-500/10 border-amber-500 text-amber-300 font-bold'
-                        : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                    }`}
+                    type="submit"
+                    disabled={regLoading}
+                    className="w-full py-3 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-extrabold text-sm rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
                   >
-                    <Crown className="w-4 h-4 shrink-0 text-amber-400" />
-                    <div>
-                      <span className="text-xs block font-bold">Administrator</span>
-                      <span className="text-[10px] text-slate-400 block font-normal">Requires Admin Key</span>
-                    </div>
+                    {regLoading ? (
+                      <span>Sending Verification Code...</span>
+                    ) : (
+                      <>
+                        <span>Request Email Verification Code</span>
+                        <Send className="w-4 h-4" />
+                      </>
+                    )}
                   </button>
-                </div>
-              </div>
+                </form>
+              ) : (
+                /* STEP 2: Email Authentication Code Input */
+                <form onSubmit={handleVerifyAndRegister} className="space-y-4 animate-fade-in">
+                  <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setVerificationStep('form');
+                        setRegError(null);
+                      }}
+                      className="text-xs text-amber-400 hover:text-amber-300 flex items-center gap-1 font-semibold cursor-pointer"
+                    >
+                      <ArrowLeft className="w-3.5 h-3.5" />
+                      <span>Edit Registration Details</span>
+                    </button>
+                    <span className="text-[11px] font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 px-2.5 py-0.5 rounded-full border border-amber-500/30">
+                      Step 2 of 2
+                    </span>
+                  </div>
 
-              {/* Admin Passcode input if Admin role requested */}
-              {selectedRole === 'admin' && (
-                <div className="space-y-1 p-3 bg-slate-950 rounded-xl border border-amber-500/30">
-                  <label className="text-xs font-bold text-amber-300 flex items-center gap-1.5">
-                    <KeyRound className="w-3.5 h-3.5 text-amber-400" />
-                    <span>Administrator Security Passcode</span>
-                  </label>
-                  <input
-                    type="password"
-                    placeholder="Enter security passcode"
-                    value={adminKey}
-                    onChange={(e) => setAdminKey(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-900 border border-slate-700 rounded-lg text-xs font-mono text-amber-300 focus:border-amber-500 focus:outline-none"
-                  />
-                  <p className="text-[10px] text-slate-400">
-                    Entering a valid Admin Security Key creates an instantly active Administrator account.
-                  </p>
-                </div>
+                  {/* Email Delivery Notification Banner */}
+                  <div className="p-4 bg-slate-950 rounded-2xl border border-amber-500/30 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-amber-500/20 text-amber-400 rounded-xl shrink-0">
+                        <Mail className="w-5 h-5" />
+                      </div>
+                      <div className="space-y-1">
+                        <h4 className="text-xs font-bold text-white">Email Authentication Code Sent</h4>
+                        <p className="text-[11px] text-slate-400 leading-relaxed">
+                          We sent a 6-digit authentication verification code to <span className="font-mono text-amber-300 font-bold">{regEmail}</span> to confirm your email address exists.
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Simulated Delivery Code Box */}
+                    {sentCode && (
+                      <div className="p-3 bg-slate-900 border border-slate-800 rounded-xl flex items-center justify-between">
+                        <div>
+                          <span className="text-[10px] text-slate-400 block font-medium uppercase tracking-wider">Authentication Code:</span>
+                          <span className="text-lg font-mono font-extrabold text-amber-400 tracking-widest">{sentCode}</span>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEnteredCode(sentCode);
+                            navigator.clipboard.writeText(sentCode);
+                            setCodeCopied(true);
+                            setTimeout(() => setCodeCopied(false), 2000);
+                          }}
+                          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold text-slate-200 rounded-lg border border-slate-700 transition-all flex items-center gap-1.5 cursor-pointer"
+                        >
+                          {codeCopied ? (
+                            <>
+                              <Check className="w-3.5 h-3.5 text-emerald-400" />
+                              <span className="text-emerald-400">Copied & Filled</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3.5 h-3.5 text-amber-400" />
+                              <span>Copy & Auto-fill</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* 6-Digit Code Input */}
+                  <div className="space-y-1">
+                    <label className="text-xs font-bold text-slate-300 block">Enter 6-Digit Authentication Code</label>
+                    <input
+                      type="text"
+                      required
+                      maxLength={6}
+                      autoFocus
+                      placeholder="123456"
+                      value={enteredCode}
+                      onChange={(e) => setEnteredCode(e.target.value.replace(/\D/g, ''))}
+                      className="w-full px-4 py-3 bg-slate-950 border border-slate-800 rounded-xl text-center text-xl font-mono font-bold text-amber-400 tracking-[0.5em] focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all placeholder:tracking-normal placeholder:font-sans placeholder:text-slate-700"
+                    />
+                  </div>
+
+                  {/* Submit Button */}
+                  <button
+                    type="submit"
+                    disabled={regLoading}
+                    className="w-full py-3 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-extrabold text-sm rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
+                  >
+                    {regLoading ? (
+                      <span>Verifying & Creating Account...</span>
+                    ) : (
+                      <>
+                        <span>Verify Code & Complete Registration</span>
+                        <CheckCircle2 className="w-4 h-4" />
+                      </>
+                    )}
+                  </button>
+
+                  {/* Resend Code Button */}
+                  <div className="text-center pt-1">
+                    <button
+                      type="button"
+                      disabled={resendCooldown > 0 || regLoading}
+                      onClick={handleResendCode}
+                      className="text-xs text-slate-400 hover:text-amber-400 transition-colors inline-flex items-center gap-1.5 font-medium disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+                    >
+                      <RotateCcw className="w-3.5 h-3.5 text-amber-400" />
+                      {resendCooldown > 0 ? (
+                        <span>Resend Code in {resendCooldown}s</span>
+                      ) : (
+                        <span>Didn't receive code? Resend Code</span>
+                      )}
+                    </button>
+                  </div>
+                </form>
               )}
-
-              <button
-                type="submit"
-                disabled={regLoading}
-                className="w-full py-3 bg-amber-500 hover:bg-amber-400 active:bg-amber-600 text-slate-950 font-extrabold text-sm rounded-xl shadow-lg transition-all cursor-pointer flex items-center justify-center space-x-2 disabled:opacity-50"
-              >
-                {regLoading ? (
-                  <span>Creating Account...</span>
-                ) : (
-                  <>
-                    <span>Create User Account</span>
-                    <UserPlus className="w-4 h-4" />
-                  </>
-                )}
-              </button>
-            </form>
+            </div>
           )}
         </div>
 
