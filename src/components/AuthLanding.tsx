@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   auth, 
   getUserProfile, 
@@ -56,7 +56,16 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
   const [regError, setRegError] = useState<string | null>(null);
   const [regSuccessMessage, setRegSuccessMessage] = useState<string | null>(null);
 
-  // Handle Login
+  // Clear forms on mount and when switching tabs to prevent unwanted browser pre-fills
+  useEffect(() => {
+    setLoginEmail('');
+    setLoginPassword('');
+    setRegName('');
+    setRegUsername('');
+    setRegEmail('');
+    setRegPassword('');
+    setAdminKey('');
+  }, [activeTab]);
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
@@ -215,7 +224,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
 
           {/* LOGIN FORM */}
           {activeTab === 'login' && (
-            <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <form onSubmit={handleLoginSubmit} autoComplete="off" className="space-y-4">
               {loginError && (
                 <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs font-semibold flex items-start space-x-2.5 animate-shake">
                   <ShieldAlert className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -228,7 +237,8 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
                 <input
                   type="text"
                   required
-                  placeholder="e.g. admin101 or name@company.com"
+                  autoComplete="username"
+                  placeholder="Enter username or email address"
                   value={loginEmail}
                   onChange={(e) => setLoginEmail(e.target.value)}
                   className="w-full px-4 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-xs font-medium text-white focus:border-amber-500 focus:ring-1 focus:ring-amber-500 focus:outline-none transition-all"
@@ -241,6 +251,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
                   <input
                     type={showLoginPassword ? 'text' : 'password'}
                     required
+                    autoComplete="current-password"
                     placeholder="••••••••"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
@@ -275,7 +286,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
 
           {/* REGISTER FORM */}
           {activeTab === 'register' && (
-            <form onSubmit={handleRegisterSubmit} className="space-y-4">
+            <form onSubmit={handleRegisterSubmit} autoComplete="off" className="space-y-4">
               {regError && (
                 <div className="p-3.5 bg-rose-500/10 border border-rose-500/30 rounded-xl text-rose-300 text-xs font-semibold flex items-start space-x-2.5">
                   <AlertCircle className="w-4 h-4 text-rose-400 shrink-0 mt-0.5" />
@@ -295,6 +306,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
                 <input
                   type="text"
                   required
+                  autoComplete="name"
                   placeholder="e.g. John Doe"
                   value={regName}
                   onChange={(e) => setRegName(e.target.value)}
@@ -307,6 +319,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
                 <input
                   type="text"
                   required
+                  autoComplete="username"
                   placeholder="e.g. john_doe or tech_user"
                   value={regUsername}
                   onChange={(e) => setRegUsername(e.target.value)}
@@ -319,6 +332,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
                 <input
                   type="email"
                   required
+                  autoComplete="email"
                   placeholder="name@company.com"
                   value={regEmail}
                   onChange={(e) => setRegEmail(e.target.value)}
@@ -332,6 +346,7 @@ export const AuthLanding: React.FC<AuthLandingProps> = ({
                   <input
                     type={showRegPassword ? 'text' : 'password'}
                     required
+                    autoComplete="new-password"
                     placeholder="••••••••"
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
