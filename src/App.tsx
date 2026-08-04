@@ -30,6 +30,7 @@ import {
   getStoredHistoryReports, 
   saveReportToHistory, 
   saveMultipleReportsToHistory, 
+  replaceLocalHistoryCache,
   deleteSingleHistoryRecord, 
   clearAllHistoryRecords,
   findExistingReportByTechAndDate,
@@ -137,44 +138,41 @@ export default function App() {
 
     const userId = currentUserProfile.uid;
 
-    // Fast load from user-scoped localStorage
+    // Fast initial optimistic load from user-scoped localStorage
     const localReports = getStoredHistoryReports(userId);
     setHistoryReports(localReports);
 
-    // Sync from Firestore database
+    // Sync from Firestore database (authoritative database source)
     fetchUserReportsFromFirestore(userId).then((fsReports) => {
-      if (fsReports && fsReports.length > 0) {
-        saveMultipleReportsToHistory(fsReports, userId);
-        setHistoryReports(fsReports);
-      }
+      replaceLocalHistoryCache(fsReports, userId);
+      setHistoryReports(fsReports);
     }).catch(err => {
-      console.error('Failed to sync user reports from Firestore:', err);
+      console.error('Failed to sync user reports from Firestore database:', err);
     });
   }, [currentUserProfile]);
 
   const handleRefreshHistory = () => {
     const userId = currentUserProfile?.uid;
-    setHistoryReports(getStoredHistoryReports(userId));
     if (userId) {
       fetchUserReportsFromFirestore(userId).then((fsReports) => {
-        if (fsReports && fsReports.length > 0) {
-          saveMultipleReportsToHistory(fsReports, userId);
-          setHistoryReports(fsReports);
-        }
+        replaceLocalHistoryCache(fsReports, userId);
+        setHistoryReports(fsReports);
       });
+    } else {
+      setHistoryReports(getStoredHistoryReports(userId));
     }
   };
 
-  const handleDeleteHistoryRecord = (report: TripReportData) => {
+  const handleDeleteHistoryRecord = async (report: TripReportData) => {
     const userId = currentUserProfile?.uid;
-    deleteSingleHistoryRecord(report.id, {
+    deleteSingleHistoryRecord(report, {
       date: report.dateOfSchedule,
       tech: report.technician,
       fileName: report.fileName
     }, userId);
 
     if (userId && report.id) {
-      deleteUserReportFromFirestore(userId, report.id);
+      await deleteUserReportFromFirestore(userId, report.id);
     }
 
     // Remove from active reportsList if present so it isn't auto-saved back
@@ -186,14 +184,20 @@ export default function App() {
       return true;
     }));
 
-    setHistoryReports(getStoredHistoryReports(userId));
+    if (userId) {
+      const fsReports = await fetchUserReportsFromFirestore(userId);
+      replaceLocalHistoryCache(fsReports, userId);
+      setHistoryReports(fsReports);
+    } else {
+      setHistoryReports(getStoredHistoryReports(userId));
+    }
   };
 
-  const handleClearAllHistory = () => {
+  const handleClearAllHistory = async () => {
     const userId = currentUserProfile?.uid;
     clearAllHistoryRecords(userId);
     if (userId) {
-      clearUserReportsFromFirestore(userId);
+      await clearUserReportsFromFirestore(userId);
     }
     setReportsList([]);
     setHistoryReports([]);
@@ -212,7 +216,7 @@ export default function App() {
     mode: 'replace' | 'add';
   } | null>(null);
 
-  const commitReportGenerated = (newReport: TripReportData, mode: 'replace' | 'add') => {
+  const commitReportGenerated = async (newReport: TripReportData, mode: 'replace' | 'add') => {
     if (mode === 'replace') {
       setReportsList([newReport]);
     } else {
@@ -220,11 +224,15 @@ export default function App() {
     }
 
     const userId = currentUserProfile?.uid;
-    saveReportToHistory(newReport, userId);
     if (userId) {
-      saveUserReportToFirestore(userId, newReport);
+      await saveUserReportToFirestore(userId, newReport);
+      const fsReports = await fetchUserReportsFromFirestore(userId);
+      replaceLocalHistoryCache(fsReports, userId);
+      setHistoryReports(fsReports);
+    } else {
+      saveReportToHistory(newReport, userId);
+      setHistoryReports(getStoredHistoryReports(userId));
     }
-    setHistoryReports(getStoredHistoryReports(userId));
   };
 
   const processReportCommit = (newReport: TripReportData, mode: 'replace' | 'add') => {
@@ -268,12 +276,12 @@ export default function App() {
     setPendingMultipleProject(null);
   };
 
-  const handleConfirmRewrite = () => {
+  const handleConfirmRewrite = async () => {
     if (!pendingDuplicate) return;
     const { newReport, existingReport, mode } = pendingDuplicate;
     const userId = currentUserProfile?.uid;
 
-    // 1. Delete prior record for specific technician & schedule date from history storage & Firestore
+    // 1. Delete prior record for specific technician & schedule date from local storage & Firestore
     deleteSingleHistoryRecord(existingReport, {
       date: existingReport.dateOfSchedule,
       tech: existingReport.technician,
@@ -281,16 +289,21 @@ export default function App() {
     }, userId);
 
     if (userId && existingReport.id) {
-      deleteUserReportFromFirestore(userId, existingReport.id);
+      await deleteUserReportFromFirestore(userId, existingReport.id);
     }
 
     // 2. Remove prior record for specific technician & schedule date from active reportsList
     const filteredActive = reportsList.filter(r => !isSameTechnicianAndScheduleDate(r, existingReport));
 
-    // 3. Save new report to history & Firestore
-    saveReportToHistory(newReport, userId);
+    // 3. Save new report to Firestore database & sync state
     if (userId) {
-      saveUserReportToFirestore(userId, newReport);
+      await saveUserReportToFirestore(userId, newReport);
+      const fsReports = await fetchUserReportsFromFirestore(userId);
+      replaceLocalHistoryCache(fsReports, userId);
+      setHistoryReports(fsReports);
+    } else {
+      saveReportToHistory(newReport, userId);
+      setHistoryReports(getStoredHistoryReports(userId));
     }
 
     // 4. Update active reportsList
@@ -300,8 +313,6 @@ export default function App() {
       setReportsList([...filteredActive, newReport]);
     }
 
-    // 5. Refresh history state & clear pending duplicate modal
-    setHistoryReports(getStoredHistoryReports(userId));
     setPendingDuplicate(null);
   };
 
@@ -337,7 +348,7 @@ export default function App() {
     setReportsList(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleLoadSample = () => {
+  const handleLoadSample = async () => {
     const report1 = createSampleTripReport({
       technician: 'Koda Costello',
       licensePlate: '20SB0180',
@@ -390,12 +401,17 @@ export default function App() {
 
     const userId = currentUserProfile?.uid;
     setReportsList([report1, report2]);
-    saveMultipleReportsToHistory([report1, report2], userId);
+
     if (userId) {
-      saveUserReportToFirestore(userId, report1);
-      saveUserReportToFirestore(userId, report2);
+      await saveUserReportToFirestore(userId, report1);
+      await saveUserReportToFirestore(userId, report2);
+      const fsReports = await fetchUserReportsFromFirestore(userId);
+      replaceLocalHistoryCache(fsReports, userId);
+      setHistoryReports(fsReports);
+    } else {
+      saveMultipleReportsToHistory([report1, report2], userId);
+      setHistoryReports(getStoredHistoryReports(userId));
     }
-    setHistoryReports(getStoredHistoryReports(userId));
     setActiveTab('sheet');
   };
 
@@ -461,10 +477,18 @@ export default function App() {
         {activeTab === 'sheet' && (
           <TripAnalysisTemplate
             reportsList={reportsList}
-            onUpdateReportsList={(updatedList) => {
+            onUpdateReportsList={async (updatedList) => {
               setReportsList(updatedList);
-              saveMultipleReportsToHistory(updatedList);
-              setHistoryReports(getStoredHistoryReports());
+              const userId = currentUserProfile?.uid;
+              if (userId) {
+                await Promise.all(updatedList.map(r => saveUserReportToFirestore(userId, r)));
+                const fsReports = await fetchUserReportsFromFirestore(userId);
+                replaceLocalHistoryCache(fsReports, userId);
+                setHistoryReports(fsReports);
+              } else {
+                saveMultipleReportsToHistory(updatedList, userId);
+                setHistoryReports(getStoredHistoryReports(userId));
+              }
             }}
             onClearAllReports={() => setReportsList([])}
             onAddTechnicianReport={handleAddTechnicianReport}
