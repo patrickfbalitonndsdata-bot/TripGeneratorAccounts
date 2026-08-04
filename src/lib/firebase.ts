@@ -836,4 +836,52 @@ export async function clearUserReportsFromFirestore(userId: string): Promise<voi
   }
 }
 
+// Subscribe to trip reports for a specific user with short-lived automatic unsubscribe cleanup
+export function subscribeToUserReports(
+  userId: string,
+  onData: (reports: any[]) => void,
+  onError?: (err: any) => void
+): () => void {
+  if (!userId) {
+    onData([]);
+    return () => {};
+  }
+  const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
+  const colRef = collection(db, 'trip_reports');
+  const q = query(colRef, where('userId', '==', userId));
+
+  const unsubscribe = onSnapshot(
+    q,
+    (snap) => {
+      const now = Date.now();
+      const reports: any[] = [];
+      snap.docs.forEach((docSnap) => {
+        const data = docSnap.data();
+        if (data && data.report) {
+          let recordTime = now;
+          if (data.updatedAt) {
+            const parsed = new Date(data.updatedAt).getTime();
+            if (!isNaN(parsed)) recordTime = parsed;
+          } else if (data.report.timestamp) {
+            recordTime = Number(data.report.timestamp);
+          }
+          const age = now - recordTime;
+          if (age > TEN_DAYS_MS) {
+            deleteDoc(docSnap.ref).catch((e) => console.warn('Expired report clean:', e));
+          } else {
+            reports.push(data.report);
+          }
+        }
+      });
+      onData(reports);
+    },
+    (error) => {
+      console.error('Firestore snapshot listener error:', error);
+      if (onError) onError(error);
+    }
+  );
+
+  return unsubscribe;
+}
+
 export { firebaseSignOut };
