@@ -1,7 +1,7 @@
 import { TripReportData } from '../types';
 
-const HISTORY_STORAGE_KEY = 'trip_analysis_stored_reports_2w';
-const TWO_WEEKS_MS = 14 * 24 * 60 * 60 * 1000;
+const HISTORY_STORAGE_KEY = 'trip_analysis_stored_reports_10d';
+const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
 
 function getStorageKey(userId?: string): string {
   if (userId && userId.trim()) {
@@ -25,11 +25,11 @@ export function getStoredHistoryReports(userId?: string): TripReportData[] {
     if (!Array.isArray(records)) return [];
 
     const now = Date.now();
-    // Filter reports within 2 weeks maximum duration
+    // Filter reports within 10 days maximum duration
     const validRecords = records.filter(item => {
       if (!item || !item.report) return false;
       const age = now - (item.timestamp || 0);
-      return age <= TWO_WEEKS_MS;
+      return age <= TEN_DAYS_MS;
     });
 
     if (validRecords.length !== records.length) {
@@ -96,6 +96,19 @@ export function findExistingReportByTechAndDate(
   }
 
   return null;
+}
+
+export function replaceLocalHistoryCache(reports: TripReportData[], userId?: string): void {
+  try {
+    const key = getStorageKey(userId);
+    const records: StoredReportRecord[] = reports.map(r => ({
+      timestamp: Number(r.uploadedAt) || Date.now(),
+      report: r
+    }));
+    localStorage.setItem(key, JSON.stringify(records));
+  } catch (e) {
+    console.error('Failed to replace local history cache', e);
+  }
 }
 
 export function saveReportToHistory(report: TripReportData, userId?: string): TripReportData[] {
