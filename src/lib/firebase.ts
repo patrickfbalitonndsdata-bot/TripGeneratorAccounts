@@ -537,6 +537,46 @@ export async function updateUserStatusOrRole(
   }
 }
 
+// Delete user account and cleanup user data (Admin / Superadmin only)
+export async function deleteUserAccount(
+  targetUid: string,
+  executorProfile: UserProfile | null
+): Promise<void> {
+  if (!executorProfile || (executorProfile.role !== 'admin' && !isSuperAdmin(executorProfile))) {
+    throw new Error('ACCESS DENIED: Only Administrators or Superadmin can delete user accounts.');
+  }
+
+  if (targetUid === executorProfile.uid) {
+    throw new Error('You cannot delete your own account from the User Management directory.');
+  }
+
+  const userDocRef = doc(db, 'users', targetUid);
+  const snap = await getDoc(userDocRef);
+
+  if (!snap.exists()) {
+    throw new Error('User record not found or already deleted.');
+  }
+
+  const userData = snap.data() as UserProfile;
+
+  if (isSuperAdmin(userData) || userData.email?.trim().toLowerCase() === SUPER_ADMIN_EMAIL) {
+    throw new Error('Superadmin account (Admin101) cannot be deleted.');
+  }
+
+  const executorIsSuper = isSuperAdmin(executorProfile);
+  if (!executorIsSuper && userData.role === 'admin') {
+    throw new Error('ACCESS DENIED: Only Superadmin (Admin101) can delete another Administrator account.');
+  }
+
+  await deleteDoc(userDocRef);
+
+  try {
+    await clearUserReportsFromFirestore(targetUid);
+  } catch (err) {
+    console.warn('Notice: associated trip reports cleanup failed or empty:', err);
+  }
+}
+
 // ==========================================
 // USER SPECIFIC TRIP REPORTS FIRESTORE API
 // ==========================================
