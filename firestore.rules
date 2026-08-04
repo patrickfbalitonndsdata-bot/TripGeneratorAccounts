@@ -1,0 +1,20 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // User accounts collection - allow read/write for user registration and admin status updates
+    match /users/{userId} {
+      allow read, write: if true;
+    }
+
+    // App settings collection
+    match /app_settings/{document=**} {
+      allow read, write: if true;
+    }
+
+    // Trip reports collection
+    match /trip_reports/{reportId} {
+      allow read, write, delete: if true;
+    }
+  }
+}
