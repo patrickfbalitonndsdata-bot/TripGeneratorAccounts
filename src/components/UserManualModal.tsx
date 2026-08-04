@@ -582,6 +582,13 @@ export const UserManualModal: React.FC<UserManualModalProps> = ({
                     Yes! Every field in the Trip Report Sheet—including shift times, job start/end times, project numbers, remarks, and job status—is fully editable.
                   </p>
                 </div>
+
+                <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 space-y-1">
+                  <h4 className="font-bold text-slate-900 text-xs">Q: Are my history records saved to the database across devices?</h4>
+                  <p className="text-xs text-slate-600 leading-relaxed">
+                    Yes! All generated trip reports and history records are stored in the cloud database tied to your account. Log in on any device to view and manage your account's synchronized history (retained for up to 10 days).
+                  </p>
+                </div>
               </div>
             </div>
           )}
