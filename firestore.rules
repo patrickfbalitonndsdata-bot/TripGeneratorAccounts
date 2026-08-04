@@ -12,6 +12,11 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Email verification codes collection
+    match /emailVerifications/{verificationId} {
+      allow read, write: if true;
+    }
+
     // Trip reports collection
     match /trip_reports/{reportId} {
       allow read, write, delete: if true;
