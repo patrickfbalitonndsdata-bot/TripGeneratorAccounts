@@ -319,6 +319,95 @@ export async function registerUserAccount(
   }
 }
 
+export interface EmailVerificationRecord {
+  email: string;
+  code: string;
+  createdAt: string;
+  expiresAt: number;
+}
+
+// Request Email Verification Code for Registration
+export async function requestRegistrationVerificationCode(
+  email: string,
+  username?: string
+): Promise<{ code: string; expiresAt: number; email: string }> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanUsername = username ? username.trim().toLowerCase() : '';
+
+  if (!cleanEmail || !cleanEmail.includes('@') || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+    throw new Error('Please enter a valid email address.');
+  }
+
+  const usersCol = collection(db, 'users');
+
+  // Check if email already registered in Firestore users
+  const snapEmail = await getDocs(query(usersCol, where('email', '==', cleanEmail)));
+  if (!snapEmail.empty) {
+    throw new Error('An account with this email address is already registered. Please log in instead.');
+  }
+
+  // Check if username already taken in Firestore users
+  if (cleanUsername) {
+    const snapUsername = await getDocs(query(usersCol, where('usernameLower', '==', cleanUsername)));
+    if (!snapUsername.empty) {
+      throw new Error('This username is already taken. Please choose a different username.');
+    }
+  }
+
+  // Generate 6-digit numeric authentication code
+  const code = Math.floor(100000 + Math.floor(Math.random() * 900000)).toString();
+  const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes expiry
+
+  const verificationRef = doc(db, 'emailVerifications', cleanEmail);
+  await setDoc(verificationRef, {
+    email: cleanEmail,
+    code,
+    createdAt: new Date().toISOString(),
+    expiresAt
+  });
+
+  return { code, expiresAt, email: cleanEmail };
+}
+
+// Verify Email Verification Code
+export async function verifyEmailCode(
+  email: string,
+  inputCode: string
+): Promise<boolean> {
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanCode = inputCode.trim();
+
+  if (!cleanCode || cleanCode.length !== 6) {
+    throw new Error('Please enter the 6-digit authentication verification code.');
+  }
+
+  const verificationRef = doc(db, 'emailVerifications', cleanEmail);
+  const snap = await getDoc(verificationRef);
+
+  if (!snap.exists()) {
+    throw new Error('No active verification code found for this email. Please click "Resend Code".');
+  }
+
+  const data = snap.data() as EmailVerificationRecord;
+
+  if (Date.now() > data.expiresAt) {
+    throw new Error('The authentication code has expired. Please click "Resend Code" to get a new code.');
+  }
+
+  if (data.code !== cleanCode) {
+    throw new Error('Invalid authentication code. Please check the code and try again.');
+  }
+
+  // Clean up verification record after successful verification
+  try {
+    await deleteDoc(verificationRef);
+  } catch (err) {
+    console.warn('Notice: verification record cleanup:', err);
+  }
+
+  return true;
+}
+
 // Login user with Firebase Auth or Firestore fallback (accepts email OR username)
 export async function loginUserAccount(identifier: string, pass: string): Promise<UserProfile> {
   const cleanIdentifier = identifier.trim().toLowerCase();
