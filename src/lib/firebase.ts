@@ -128,8 +128,9 @@ export async function getUserProfile(uid: string): Promise<UserProfile | null> {
 export async function setUserProfile(profile: UserProfile): Promise<void> {
   try {
     const userDocRef = doc(db, 'users', profile.uid);
+    const cleanedProfile = JSON.parse(JSON.stringify(profile));
     await setDoc(userDocRef, {
-      ...profile,
+      ...cleanedProfile,
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch (error) {
@@ -186,9 +187,10 @@ export async function updateUserProfileFields(
     updatedProfile.passwordHash = hashPassword(updates.newPassword.trim());
   }
 
-  await setDoc(userDocRef, updatedProfile, { merge: true });
-  saveLocalSession(updatedProfile);
-  return updatedProfile;
+  const cleanedUpdatedProfile = JSON.parse(JSON.stringify(updatedProfile));
+  await setDoc(userDocRef, cleanedUpdatedProfile, { merge: true });
+  saveLocalSession(cleanedUpdatedProfile);
+  return cleanedUpdatedProfile;
 }
 
 // Register user with Firebase Auth or Firestore fallback
@@ -745,20 +747,37 @@ export interface UserTripReportDoc {
   updatedAt: string;
 }
 
-// Fetch all trip reports belonging strictly to a specific user UID
+// Fetch all trip reports belonging strictly to a specific user UID (auto-deletes records older than 10 days)
 export async function fetchUserReportsFromFirestore(userId: string): Promise<any[]> {
   if (!userId) return [];
   try {
+    const TEN_DAYS_MS = 10 * 24 * 60 * 60 * 1000;
+    const now = Date.now();
     const colRef = collection(db, 'trip_reports');
     const q = query(colRef, where('userId', '==', userId));
     const snap = await getDocs(q);
     const reports: any[] = [];
-    snap.forEach((docSnap) => {
+    
+    for (const docSnap of snap.docs) {
       const data = docSnap.data();
       if (data && data.report) {
-        reports.push(data.report);
+        let recordTime = now;
+        if (data.updatedAt) {
+          const parsed = new Date(data.updatedAt).getTime();
+          if (!isNaN(parsed)) recordTime = parsed;
+        } else if (data.report.timestamp) {
+          recordTime = Number(data.report.timestamp);
+        }
+
+        const age = now - recordTime;
+        if (age > TEN_DAYS_MS) {
+          // Automatically delete stored reports older than 10 days from database
+          deleteDoc(docSnap.ref).catch((err) => console.warn('Firestore expired report auto-delete notice:', err));
+        } else {
+          reports.push(data.report);
+        }
       }
-    });
+    }
     return reports;
   } catch (error) {
     console.error('Error fetching user trip reports from Firestore:', error);
@@ -770,13 +789,19 @@ export async function fetchUserReportsFromFirestore(userId: string): Promise<any
 export async function saveUserReportToFirestore(userId: string, report: any): Promise<void> {
   if (!userId || !report) return;
   try {
-    const reportId = report.id || `rep_${Date.now()}`;
-    const docId = `${userId}_${reportId}`;
+    const reportId = report.id || `rep_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const safeReportId = reportId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const docId = `${userId}_${safeReportId}`;
     const docRef = doc(db, 'trip_reports', docId);
+    
+    const reportToSave = { ...report, id: reportId };
+    // Clean object to strip undefined values which cause setDoc to fail in Firestore
+    const cleanedReport = JSON.parse(JSON.stringify(reportToSave));
+
     await setDoc(docRef, {
       id: reportId,
       userId,
-      report: { ...report, id: reportId },
+      report: cleanedReport,
       updatedAt: new Date().toISOString()
     }, { merge: true });
   } catch (error) {
@@ -788,7 +813,8 @@ export async function saveUserReportToFirestore(userId: string, report: any): Pr
 export async function deleteUserReportFromFirestore(userId: string, reportId: string): Promise<void> {
   if (!userId || !reportId) return;
   try {
-    const docId = `${userId}_${reportId}`;
+    const safeReportId = reportId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const docId = `${userId}_${safeReportId}`;
     const docRef = doc(db, 'trip_reports', docId);
     await deleteDoc(docRef);
   } catch (error) {
